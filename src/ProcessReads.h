@@ -70,8 +70,9 @@ public:
 class MasterProcessor {
 public:
   MasterProcessor (KmerIndex &index, const ProgramOptions& opt, MinCollector &tc)
-    : tc(tc), index(index), opt(opt), SR(opt), numreads(0)
-    ,nummapped(0), num_umi(0), tlencount(0), biasCount(0), maxBiasCount((opt.bias) ? 1000000 : 0) { 
+    : tc(tc), index(index), opt(opt), SR(opt), numreads(0),
+      nummapped(0), num_umi(0), tlencount(0), biasCount(0), maxBiasCount((opt.bias) ? 1000000 : 0),
+	  output_handler(index, opt) { 
       if (opt.batch_mode) {
         batchCounts.resize(opt.batch_ids.size(), {});
         
@@ -87,10 +88,6 @@ public:
         ofusion.open(opt.output + "/fusion.txt");
         ofusion << "TYPE\tNAME1\tSEQ1\tKPOS1\tNAME2\tSEQ2\tKPOS2\tINFO\tPOS1\tPOS2\n";
       }
-
-	  // Initialize enhanced output object
-	  output_handler = EnhancedOutput(index, opt);
-
     }
 
   std::mutex reader_lock;

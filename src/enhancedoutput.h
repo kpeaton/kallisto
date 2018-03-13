@@ -112,20 +112,13 @@ public:
 	std::map<JunctionKey, std::tuple<std::string, int, char, int, int, int, int>> junction_map;
 
 	// Temporary and buffer storage for mapping reads and BAM output
-	std::set<std::string> gene_list;
-	std::vector<uint> bam_cigar;
-	uint align_len;
 	char outBamBuffer[MAX_BAM_ALIGN_SIZE];
 
-	// Timing variables
-	HighResTimer timer;
-	HighResTimer::duration get_sam_time, out_align_time, output_time;
-	HighResTimer::duration pre_sort_time, sort_time, post_sort_time;
-
-	bool getSamData(std::string &ref_name, char *cig, int& strand, bool mapped, int &posread, int &posmate, int slen1, int slen2);
-	void buildCigar(std::string &cig_string, bool prepend, uint op_len, const char cig_char, uint cig_int);
+	void processAlignment(std::string &ref_name, int& strand, int &posread, int &posmate, int slen1, int slen2, char *cig, std::vector<uint> &bam_cigar, uint &align_len);
+	void buildSAMCigar(std::string &cig_string, bool prepend, uint op_len, const char cig_char);
+	void buildBAMCigar(std::vector<uint> &bam_cigar, uint &align_len, bool prepend, uint op_len, uint cig_int);
 	void mapJunction(std::string chrom_name, std::string trans_name, bool negstrand, int start_coord, int end_coord, int size1, int size2, int pair_start, int pair_end);
-	void outputBamAlignment(std::string ref_name, int posread, int flag, int slen, int posmate, int tlen, const char *n1, const char *seq, const char *qual, int nmap, int strand);
+	void outputBamAlignment(std::string ref_name, int posread, int flag, int slen, int posmate, int tlen, const char *n1, std::vector<uint> bam_cigar, uint align_len, const char *seq, const char *qual, int nmap, int strand, int id);
 	void outputSortedBam();
 
 	static int reg2bin(int beg, int end);

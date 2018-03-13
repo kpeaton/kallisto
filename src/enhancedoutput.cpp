@@ -48,8 +48,7 @@ EnhancedOutput::EnhancedOutput(KmerIndex &index, const ProgramOptions& opt)
 	: enhancedoutput(opt.pseudobam && !opt.exon_coords_file.empty()),
 	  sortedbam(opt.sortedbam),
 	  outputunmapped(false),
-	  outputbed(opt.pseudobam && !opt.exon_coords_file.empty() && !opt.bed_file.empty()),
-	  get_sam_time(0), out_align_time(0), output_time(0), pre_sort_time(0), sort_time(0), post_sort_time(0)
+	  outputbed(opt.pseudobam && !opt.exon_coords_file.empty() && !opt.bed_file.empty())
 {
 	if (enhancedoutput) {
 
@@ -125,10 +124,11 @@ EnhancedOutput::EnhancedOutput(KmerIndex &index, const ProgramOptions& opt)
 			mkdir(sort_dir.c_str(), 0777);  // Move this to CheckOptions?
 
 			int refid = 0;
+			std::fstream::openmode stream_flags = std::fstream::in | std::fstream::out | std::fstream::trunc | std::fstream::binary;
 			for (auto &entry : ref_seq_map) {
 
 				header_stream << "@SQ\tSN:" << entry.first << "\tLN:" << entry.second[0] << "\n";
-				sort_file_map[entry.first] = new std::fstream(sort_dir + "/" + entry.first, std::fstream::in | std::fstream::out | std::fstream::trunc | std::fstream::binary);
+				sort_file_map[entry.first] = new std::fstream(sort_dir + "/" + entry.first, stream_flags); // Use std::move instead of new? Use emplace?
 				entry.second[1] = refid++;
 
 			}
@@ -164,38 +164,16 @@ EnhancedOutput::EnhancedOutput()
 	: enhancedoutput(false),
 	  sortedbam(false),
 	  outputunmapped(false),
-	  outputbed(false),
-	  get_sam_time(0), out_align_time(0), output_time(0), pre_sort_time(0), sort_time(0), post_sort_time(0)
+	  outputbed(false)
 {
 }
 
-bool EnhancedOutput::getSamData(std::string &ref_name, char *cig, int& strand, bool mapped, int &posread, int &posmate, int slen1, int slen2)
+void EnhancedOutput::processAlignment(std::string &ref_name, int& strand, int &posread, int &posmate, int slen1, int slen2, char *cig, std::vector<uint> &bam_cigar, uint &align_len)
 {
-	timer.resetTimer();
-	bam_cigar.clear();
-	align_len = 0;
-
-	if (!mapped) {
-		return 1;  // HAVE TO ADD OPTION TO OUTPUT UNMAPPED READS FOR ENHANCED_OUTPUT!!!
-	}
-
-	ExonMap::const_iterator map_entry = exon_map.find(ref_name);
-	if (map_entry == exon_map.end()) {
-		std::cerr << "Transcript name could not be found in exon coordinate file: " << ref_name << std::endl;
-		exit(1);
-	}
-
-	const char *gene_name = std::get<0>(map_entry->second).c_str();
-	if (gene_list.find(gene_name) == gene_list.end()) {
-		gene_list.emplace(gene_name);
-	} else {
-		get_sam_time += timer.timeSinceReset();
-		return 1;
-	}
-
 	std::string trans_name = ref_name;
+	ExonMap::const_iterator map_entry = exon_map.find(ref_name);
 	ref_name = std::get<1>(map_entry->second);
-	strand = (std::get<2>(map_entry->second) < 0) ? -1 : 1;  // Use trsense from findPosition instead??!!
+	strand = (std::get<2>(map_entry->second) < 0) ? -1 : 1;  // Use trsense from findPosition instead?!
 	bool negstrand = strand < 0;
 	IntronFlag intron_flag = std::get<3>(map_entry->second);
 
@@ -221,7 +199,13 @@ bool EnhancedOutput::getSamData(std::string &ref_name, char *cig, int& strand, b
 					start_coord = read_offset;
 					end_coord = span[2];
 				}
-				buildCigar(cig_string, negstrand, end_coord - start_coord - 1, 'N', 3);
+
+				// Update CIGAR string:
+				if (sortedbam) {
+					buildBAMCigar(bam_cigar, align_len, negstrand, end_coord - start_coord - 1, 3);
+				} else{
+					buildSAMCigar(cig_string, negstrand, end_coord - start_coord - 1, 'N');
+				}
 
 				// Store BED file information:
 				if (outputbed) {
@@ -240,7 +224,13 @@ bool EnhancedOutput::getSamData(std::string &ref_name, char *cig, int& strand, b
 					}
 				}
 				read_rem -= op_len;
-				buildCigar(cig_string, negstrand, op_len, 'M', 0);
+
+				// Update CIGAR string:
+				if (sortedbam) {
+					buildBAMCigar(bam_cigar, align_len, negstrand, op_len, 0);
+				} else{
+					buildSAMCigar(cig_string, negstrand, op_len, 'M');
+				}
 
 			} else if (posread <= span[1]) {  // Begin mapping read
 
@@ -248,7 +238,11 @@ bool EnhancedOutput::getSamData(std::string &ref_name, char *cig, int& strand, b
 				if (posread < span[0]) {
 					op_len = span[0] - posread;
 					read_rem -= op_len;
-					buildCigar(cig_string, false, op_len, 'S', 4);
+					if (sortedbam) {
+						buildBAMCigar(bam_cigar, align_len, false, op_len, 4);
+					} else{
+						buildSAMCigar(cig_string, false, op_len, 'S');
+					}
 				}
 
 				// Find overlap with exon segment:
@@ -266,7 +260,13 @@ bool EnhancedOutput::getSamData(std::string &ref_name, char *cig, int& strand, b
 					posread = (negstrand) ? span[2] - read_offset : posread + span[2] - span[0];
 				}
 				read_rem -= op_len;
-				buildCigar(cig_string, negstrand, op_len, 'M', 0);
+
+				// Update CIGAR string:
+				if (sortedbam) {
+					buildBAMCigar(bam_cigar, align_len, negstrand, op_len, 0);
+				} else{
+					buildSAMCigar(cig_string, negstrand, op_len, 'M');
+				}
 
 			}
 
@@ -303,7 +303,11 @@ bool EnhancedOutput::getSamData(std::string &ref_name, char *cig, int& strand, b
 		if (negstrand) {
 			posread = read_offset - read_rem;
 		}
-		buildCigar(cig_string, negstrand, read_rem, 'S', 4);
+		if (sortedbam) {
+			buildBAMCigar(bam_cigar, align_len, negstrand, read_rem, 4);
+		} else{
+			buildSAMCigar(cig_string, negstrand, read_rem, 'S');
+		}
 	}
 
 	if (mate_rem == slen2) {  // Account for mate completely outside segment (is this even necessary?!)
@@ -353,41 +357,33 @@ bool EnhancedOutput::getSamData(std::string &ref_name, char *cig, int& strand, b
 	}
 
 	if (!sortedbam) {
-		if (mapped) {
-			sprintf(cig, "%s", cig_string.c_str());
-		} else {
-			sprintf(cig, "*");
-		}
+		sprintf(cig, "%s", cig_string.c_str());
 	}
-
-	get_sam_time += timer.timeSinceReset();
-	return 0;
 }
 
-void EnhancedOutput::buildCigar(std::string &cig_string, bool prepend, uint op_len, const char cig_char, uint cig_int)
+void EnhancedOutput::buildSAMCigar(std::string &cig_string, bool prepend, uint op_len, const char cig_char)
 {
-	if (sortedbam) {
+	static char cig_[10];
+	char *cig = &cig_[0];
 
-		if (prepend) {
-			bam_cigar.insert(bam_cigar.begin(), ((op_len << 4) | cig_int));
-		} else {
-			bam_cigar.push_back(((op_len << 4) | cig_int));
-		}
-		if (cig_int != 4) {
-			align_len += op_len;
-		}
+	sprintf(cig, "%d%c", op_len, cig_char);  // Would to_string be faster?
+	if (prepend) {
+		cig_string.insert(0, cig);
+	}
+	else {
+		cig_string += cig;
+	}
+}
 
+void EnhancedOutput::buildBAMCigar(std::vector<uint> &bam_cigar, uint &align_len, bool prepend, uint op_len, uint cig_int)
+{
+	if (prepend) {
+		bam_cigar.insert(bam_cigar.begin(), ((op_len << 4) | cig_int));
 	} else {
-
-		static char cig_[10];
-		char *cig = &cig_[0];
-
-		sprintf(cig, "%d%c", op_len, cig_char);  // Would to_string be faster?
-		if (prepend) {
-			cig_string.insert(0, cig);
-		} else {
-			cig_string += cig;
-		}
+		bam_cigar.push_back(((op_len << 4) | cig_int));
+	}
+	if (cig_int != 4) {
+		align_len += op_len;
 	}
 }
 
@@ -401,9 +397,8 @@ void EnhancedOutput::mapJunction(std::string chrom_name, std::string trans_name,
 	}
 }
 
-void EnhancedOutput::outputBamAlignment(std::string ref_name, int posread, int flag, int slen, int posmate, int tlen, const char *n1, const char *seq, const char *qual, int nmap, int strand)
+void EnhancedOutput::outputBamAlignment(std::string ref_name, int posread, int flag, int slen, int posmate, int tlen, const char *n1, std::vector<uint> bam_cigar, uint align_len, const char *seq, const char *qual, int nmap, int strand, int id)
 {
-	timer.resetTimer();
 	uint *buffer = (uint*)(outBamBuffer);
 	uint n_bytes = 0;
 	uint name_len;
@@ -473,13 +468,10 @@ void EnhancedOutput::outputBamAlignment(std::string ref_name, int posread, int f
 	// Output to sorting file
 	sort_file_map[ref_name]->write(outBamBuffer, n_bytes);
 	ref_seq_map[ref_name][2]++; // Combine with sort_file_map?
-
-	out_align_time += timer.timeSinceReset();
 }
 
 void EnhancedOutput::outputSortedBam()
 {
-	timer.resetTimer();
 	std::fstream *sort_file;
 	char *align_buffer;
 	uint *sort_buffer;
@@ -507,7 +499,6 @@ void EnhancedOutput::outputSortedBam()
 	int hlen = (int)sam_header.size();
 	bgzf_write(bam_stream, (char*)&hlen, sizeof(hlen));
 	bgzf_write(bam_stream, sam_header.c_str(), hlen);
-//	std::cerr << hlen << std::endl << sam_header.c_str() << std::endl;
 	int nchr = (int)ref_seq_map.size();
 	bgzf_write(bam_stream, (char*)&nchr, sizeof(nchr));
 	for (auto const &entry : ref_seq_map) {
@@ -530,11 +521,9 @@ void EnhancedOutput::outputSortedBam()
 	align_buffer = new char[max_file_size+1];
 	sort_buffer = new uint[max_n_align * 2];
 
-	pre_sort_time += timer.timeSinceReset();
 	// Sort alignments for each sorting file
 	for (auto &entry : ref_seq_map) {
 
-		timer.resetTimer();
 		// Get file stream
 		sort_file = sort_file_map[entry.first];
 		uint n_align = entry.second[2];
@@ -562,17 +551,14 @@ void EnhancedOutput::outputSortedBam()
 			position += buffer[0] + sizeof(uint);
 		}
 
-		pre_sort_time += timer.timeSinceReset();
 		// Sort by genomic position
 		qsort((void*) sort_buffer, n_align, sizeof(uint) * 2, funCompareArrays<uint, 2>);
 
-		sort_time += timer.timeSincePrevious();
 		// Output sorted alignments
 		for (uint i = 0; i < n_align; i++) {
 			char *buffer = align_buffer + sort_buffer[i * 2 + 1];
 			bgzf_write(bam_stream, buffer, *((uint*)buffer) + sizeof(uint));
 		}
-		post_sort_time += timer.timeSincePrevious();
 
 	}
 
@@ -581,7 +567,6 @@ void EnhancedOutput::outputSortedBam()
 	bgzf_close(bam_stream);
 	delete[] align_buffer;
 	delete[] sort_buffer;
-
 }
 
 // calculate bin given an alignment covering [beg,end) (zero-based, half-close-half-open)

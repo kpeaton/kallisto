@@ -5,7 +5,7 @@
 void outputPseudoBam(const KmerIndex &index, const std::vector<int> &u,
     const char *s1, const char *n1, const char *q1, int slen1, int nlen1, const std::vector<std::pair<KmerEntry,int>>& v1,
     const char *s2, const char *n2, const char *q2, int slen2, int nlen2, const std::vector<std::pair<KmerEntry,int>>& v2,
-	bool paired, EnhancedOutput &output_handler) {
+	bool paired, EnhancedOutput &output_handler, int id) {
 
   static char buf1[32768];
   static char buf2[32768];
@@ -41,8 +41,28 @@ void outputPseudoBam(const KmerIndex &index, const std::vector<int> &u,
     }
   } else {
 
-	if (output_handler.enhancedoutput) {
-		// Trim u to remove repeated genes!
+	std::vector<int> v;
+
+	if (output_handler.enhancedoutput) {  // Trim u to remove repeated genes
+		std::set<std::string> gene_list;
+
+		for (auto tr : u) {
+			std::string ref_name = index.target_names_[tr];
+			auto map_entry = output_handler.exon_map.find(ref_name);
+
+			if (map_entry == output_handler.exon_map.end()) {
+				std::cerr << "Transcript name could not be found in exon coordinate file: " << ref_name << std::endl;
+				exit(1);
+			}
+
+			const char *gene_name = std::get<0>(map_entry->second).c_str();
+			if (gene_list.find(gene_name) == gene_list.end()) {
+				gene_list.emplace(gene_name);
+				v.push_back(tr);
+			}
+		}
+	} else {
+		v = u;
 	}
 
     if (paired) {
@@ -67,7 +87,7 @@ void outputPseudoBam(const KmerIndex &index, const std::vector<int> &u,
 
       int p1 = -1, p2 = -1;
       KmerEntry val1, val2;
-      int nmap = u.size();//index.ecmap[ec].size();
+      int nmap = v.size();//index.ecmap[ec].size();
       Kmer km1, km2;
 
       if (!v1.empty()) {
@@ -98,8 +118,7 @@ void outputPseudoBam(const KmerIndex &index, const std::vector<int> &u,
 
       // output pseudoalignments for read 1
       bool firstTr = true;
-	  output_handler.gene_list.clear();
-      for (auto tr : u) {
+      for (auto tr : v) {
         int f1 = flag1;
         std::pair<int, bool> x1 {-1,true};
         std::pair<int, bool> x2 {-1,true};
@@ -149,29 +168,30 @@ void outputPseudoBam(const KmerIndex &index, const std::vector<int> &u,
 		int mapq = (!v1.empty()) ? 255 : 0;
 		const char *seq = (f1 & 0x10) ? &buf1[0] : s1;
 		const char *qual = (f1 & 0x10) ? &buf2[0] : q1;
-		HighResTimer timer;
 		if (!output_handler.enhancedoutput) {  // Default calculations when not using enhanced output
 
 			getCIGARandSoftClip(cig, bool(f1 & 0x10), mapped, posread, posmate, slen1, index.target_lens_[tr]);
 
 			printf("%s\t%d\t%s\t%d\t%d\t%s\t=\t%d\t%d\t%s\t%s\tNH:i:%d\n", n1, flag, ref_name.c_str(), posread, mapq, cig, posmate, tlen, seq, qual, nmap);
 			if (v1.empty()) {
-				output_handler.output_time += timer.timeSinceReset();
 				break; // only report primary alignment
 			}
 
 		} else {  // Convert to genome coordinates and build CIGAR string
 
-			int strand = 0;
-
-			if (output_handler.getSamData(ref_name, cig, strand, mapped, posread, posmate, slen1, slen2)) {
-				output_handler.output_time += timer.timeSinceReset();
-				continue;
+			if (!mapped) {
+				continue;  // Add option to output unmapped reads?!
 			}
+
+			int strand = 0;
+			std::vector<uint> bam_cigar;
+			uint align_len = 0;
+
+			output_handler.processAlignment(ref_name, strand, posread, posmate, slen1, slen2, cig, bam_cigar, align_len);
 
 			if (output_handler.sortedbam) {
 
-				output_handler.outputBamAlignment(ref_name, posread, flag, slen1, posmate, tlen, n1, seq, qual, nmap, strand);
+				output_handler.outputBamAlignment(ref_name, posread, flag, slen1, posmate, tlen, n1, bam_cigar, align_len, seq, qual, nmap, strand, id);
 
 			} else {
 
@@ -187,15 +207,13 @@ void outputPseudoBam(const KmerIndex &index, const std::vector<int> &u,
 			}
 
 		}
-		output_handler.output_time += timer.timeSinceReset();
 
       }
 
       revset = false;
       // output pseudoalignments for read 2
       firstTr = true;
-	  output_handler.gene_list.clear();
-      for (auto tr : u) {
+      for (auto tr : v) {
         int f2 = flag2;
         std::pair<int, bool> x1 {-1,true};
         std::pair<int, bool> x2 {-1,true};
@@ -246,29 +264,30 @@ void outputPseudoBam(const KmerIndex &index, const std::vector<int> &u,
 		int mapq = (!v2.empty()) ? 255 : 0;
 		const char *seq = (f2 & 0x10) ? &buf1[0] : s2;
 		const char *qual = (f2 & 0x10) ? &buf2[0] : q2;
-		HighResTimer timer;
 		if (!output_handler.enhancedoutput) {  // Default calculations when not using enhanced output
 
 			getCIGARandSoftClip(cig, bool(f2 & 0x10), mapped, posread, posmate, slen2, index.target_lens_[tr]);
 
 			printf("%s\t%d\t%s\t%d\t%d\t%s\t=\t%d\t%d\t%s\t%s\tNH:i:%d\n", n2, flag, ref_name.c_str(), posread, mapq, cig, posmate, tlen, seq, qual, nmap);
 			if (v2.empty()) {
-				output_handler.output_time += timer.timeSinceReset();
 				break; // only print primary alignment
 			}
 
 		} else {  // Convert to genome coordinates and build CIGAR string
 
-			int strand = 0;
-
-			if (output_handler.getSamData(ref_name, cig, strand, mapped, posread, posmate, slen2, slen1)) {
-				output_handler.output_time += timer.timeSinceReset();
-				continue;
+			if (!mapped) {
+				continue;  // Add option to output unmapped reads?!
 			}
+
+			int strand = 0;
+			std::vector<uint> bam_cigar;
+			uint align_len = 0;
+
+			output_handler.processAlignment(ref_name, strand, posread, posmate, slen2, slen1, cig, bam_cigar, align_len);
 
 			if (output_handler.sortedbam) {
 
-				output_handler.outputBamAlignment(ref_name, posread, flag, slen2, posmate, tlen, n2, seq, qual, nmap, strand);
+				output_handler.outputBamAlignment(ref_name, posread, flag, slen2, posmate, tlen, n2, bam_cigar, align_len, seq, qual, nmap, strand, id);
 
 			} else {
 
@@ -284,12 +303,11 @@ void outputPseudoBam(const KmerIndex &index, const std::vector<int> &u,
 			}
 
 		}
-		output_handler.output_time += timer.timeSinceReset();
 
       }
     } else {
       // single end
-      int nmap = (int) u.size();
+      int nmap = (int) v.size();
       KmerEntry val1 = v1[0].first;
       int p1 = v1[0].second;
       for (auto &x : v1) {
@@ -302,8 +320,7 @@ void outputPseudoBam(const KmerIndex &index, const std::vector<int> &u,
 
       bool revset = false;
       bool firstTr = true;
-	  output_handler.gene_list.clear();
-      for (auto tr : u) {
+      for (auto tr : v) {
         int f1 = 0;
         auto x1 = index.findPosition(tr, km1, val1, p1);
 
@@ -334,15 +351,19 @@ void outputPseudoBam(const KmerIndex &index, const std::vector<int> &u,
 
 		} else {  // Convert to genome coordinates and build CIGAR string
 
-			int strand = 0;
-
-			if (output_handler.getSamData(ref_name, cig, strand, mapped, posread, dummy, slen1, 0)) {
-				continue;
+			if (!mapped) {
+				continue;  // Add option to output unmapped reads?!
 			}
+
+			int strand = 0;
+			std::vector<uint> bam_cigar;
+			uint align_len = 0;
+
+			output_handler.processAlignment(ref_name, strand, posread, dummy, slen1, 0, cig, bam_cigar, align_len);
 
 			if (output_handler.sortedbam) {
 
-				output_handler.outputBamAlignment(ref_name, posread, flag, slen1, dummy, 0, n1, seq, qual, nmap, strand);
+				output_handler.outputBamAlignment(ref_name, posread, flag, slen1, dummy, 0, n1, bam_cigar, align_len, seq, qual, nmap, strand, id);
 
 			} else {
 

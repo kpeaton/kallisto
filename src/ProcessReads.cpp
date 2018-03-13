@@ -179,24 +179,12 @@ int ProcessReads(KmerIndex& index, const ProgramOptions& opt, MinCollector& tc) 
 
   if (MP.output_handler.enhancedoutput) {
 
-	  std::cerr << "get sam time: " << MP.output_handler.get_sam_time.count() << " sec" << std::endl;
-	  std::cerr << "out align time: " << MP.output_handler.out_align_time.count() << " sec" << std::endl;
-	  std::cerr << "total output time: " << MP.output_handler.output_time.count() << " sec" << std::endl;
-
 	  // Output sorted BAM
 
 	  if (MP.output_handler.sortedbam) {
-
 		  std::cerr << "sorting bam output ..."; std::cerr.flush();
-
 		  MP.output_handler.outputSortedBam();
-
 		  std::cerr << " done" << std::endl;
-
-		  std::cerr << "pre sort time: " << MP.output_handler.pre_sort_time.count() << " sec" << std::endl;
-		  std::cerr << "sort time: " << MP.output_handler.sort_time.count() << " sec" << std::endl;
-		  std::cerr << "post sort time: " << MP.output_handler.post_sort_time.count() << " sec" << std::endl;
-
 	  }
 
 	  // Output junction BED
@@ -278,7 +266,7 @@ void MasterProcessor::processReads() {
   if (!opt.batch_mode) {
     std::vector<std::thread> workers;
     for (int i = 0; i < opt.threads; i++) {
-      workers.emplace_back(std::thread(ReadProcessor(index,opt,tc,*this)));
+      workers.emplace_back(std::thread(ReadProcessor(index,opt,tc,*this,i)));
     }
     
     // let the workers do their thing
@@ -792,12 +780,12 @@ void ReadProcessor::processBuffer() {
         outputPseudoBam(index, u,
           s1, names[i-1].first, quals[i-1].first, l1, names[i-1].second, v1,
           s2, names[i].first, quals[i].first, l2, names[i].second, v2,
-          paired, mp.output_handler);
+          paired, mp.output_handler, id);
       } else {
 		  outputPseudoBam(index, u,
 			  s1, names[i].first, quals[i].first, l1, names[i].second, v1,
 			  nullptr, nullptr, nullptr, 0, 0, v2,
-			  paired, mp.output_handler);
+			  paired, mp.output_handler, id);
       }
     }
 
