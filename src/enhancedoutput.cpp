@@ -455,8 +455,7 @@ void EnhancedOutput::outputBamAlignment(std::string ref_name, int posread, int f
 
 	// attributes
 	memcpy(outBamBuffer + n_bytes, "NHi", 3);
-	int value = 1;
-	memcpy(outBamBuffer + n_bytes + 3, &value, sizeof(int));
+	memcpy(outBamBuffer + n_bytes + 3, &nmap, sizeof(int));
 	n_bytes += 3 + sizeof(int);
 	memcpy(outBamBuffer + n_bytes, (strand < 0) ? "XSA-": "XSA+", 4);      // Which to use?!
 	//memcpy(outBamBuffer + n_bytes, bool(flag & 0x10) ? "XSA-" : "XSA+", 4);
